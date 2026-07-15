@@ -47,9 +47,10 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq lftp || true
           rm -f /tmp/source.xlsx
-          # 内网 SFTP：连不上(黑洞)由 net:connect-timeout 快速失败；连得上则给足下载时间(硬上限 timeout 600)
+          # 内网 SFTP：公共 runner 路由不到私网 IP 会 max-retries 失败；timeout 600 为硬上限兜底
+          # 注意：lftp 4.9.2 无 net:connect-timeout 变量，别写；用 net:timeout + max-retries 控制
           timeout 600 lftp -u "$FTP_USER","$FTP_PASS" -p "$FTP_PORT" sftp://"$FTP_HOST" \
-            -e "set net:connect-timeout 15; set net:timeout 120; set net:max-retries 1; get '$FTP_REMOTE' -o /tmp/source.xlsx; quit" || true
+            -e "set net:timeout 120; set net:max-retries 1; get '$FTP_REMOTE' -o /tmp/source.xlsx; quit" || true
           ls -lh /tmp/source.xlsx || true
 
       # 有新版就转换；没有（SFTP 连不上）就沿用仓库现有 data.json.gz
