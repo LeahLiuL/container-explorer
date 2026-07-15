@@ -45,11 +45,12 @@ jobs:
           FTP_PASS: ${{ secrets.FTP_PASS }}
           FTP_REMOTE: ${{ secrets.FTP_REMOTE }}   # 远端 xlsx 路径，如 /Master Data - Leah/近4月VesselBapfile.xlsx
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp || true
           rm -f /tmp/source.xlsx
-          # 连不上（内网 SFTP 在公网 runner 上不可达）最多等 20s 即放弃，避免干挂十几分钟
-          lftp -u "$FTP_USER","$FTP_PASS" -p "$FTP_PORT" sftp://"$FTP_HOST" \
-            -e "set net:connect-timeout 20; set net:timeout 20; get '$FTP_REMOTE' -o /tmp/source.xlsx; quit"
+          # 内网 SFTP 在公网 runner 上不可达（黑洞丢包，lftp 自带超时兜不住）
+          # 用 timeout 25 硬杀进程，最多 25 秒必放弃，绝不再干挂十几分钟
+          timeout 25 lftp -u "$FTP_USER","$FTP_PASS" -p "$FTP_PORT" sftp://"$FTP_HOST" \
+            -e "set net:connect-timeout 10; set net:timeout 10; set net:max-retries 1; get '$FTP_REMOTE' -o /tmp/source.xlsx; quit" || true
           ls -lh /tmp/source.xlsx || true
 
       # 有新版就转换；没有（SFTP 连不上）就沿用仓库现有 data.json.gz
