@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Local secrets / temp / build cache
+*.local
+/tmp/
+.cache/
+*.log
+_site/
+
+# WorkBuddy internals (memory, etc.)
+.workbuddy/
