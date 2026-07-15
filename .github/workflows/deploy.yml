@@ -1,11 +1,10 @@
-name: Build & Deploy Container Explorer
+name: Deploy Container Explorer
 
-# 触发：推送到 main、每日定时（UTC 02:00 = 上海 10:00）、手动 Run workflow
+# 触发：数据推送（由本地 sync.py 推送 data.json.gz/meta.json 触发）或手动 Run workflow
+# 注意：SFTP 拉取与数据累积已在本地 sync.py 完成，本流程只负责发布，绝不重新转换/覆盖数据。
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 2 * * *"
   workflow_dispatch: {}
 
 # Pages 官方部署需要这两个权限
@@ -20,53 +19,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install deps
-        run: pip install --quiet openpyxl
-
-      # SFTP 拉取（可选）：连不上也不影响已部署的站点，会沿用仓库内现有 data.json.gz
-      - name: Try download Excel from SFTP
-        id: sftp
-        continue-on-error: true
-        env:
-          FTP_HOST: ${{ secrets.FTP_HOST }}
-          FTP_PORT: ${{ secrets.FTP_PORT }}
-          FTP_USER: ${{ secrets.FTP_USER }}
-          FTP_PASS: ${{ secrets.FTP_PASS }}
-          FTP_REMOTE: ${{ secrets.FTP_REMOTE }}   # 远端 xlsx 路径，如 /Master Data - Leah/近4月VesselBapfile.xlsx
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq lftp || true
-          rm -f /tmp/source.xlsx
-          # 内网 SFTP：公共 runner 路由不到私网 IP 会 max-retries 失败；timeout 600 为硬上限兜底
-          # 注意：lftp 4.9.2 无 net:connect-timeout 变量，别写；用 net:timeout + max-retries 控制
-          timeout 600 lftp -u "$FTP_USER","$FTP_PASS" -p "$FTP_PORT" sftp://"$FTP_HOST" \
-            -e "set net:timeout 120; set net:max-retries 1; get '$FTP_REMOTE' -o /tmp/source.xlsx; quit" || true
-          ls -lh /tmp/source.xlsx || true
-
-      # 有新版就转换；没有（SFTP 连不上）就沿用仓库现有 data.json.gz
-      - name: Convert to data.json.gz
-        run: |
-          if [ -s /tmp/source.xlsx ]; then
-            python scripts/convert.py /tmp/source.xlsx --out data.json.gz --meta meta.json --gzip
-          else
-            echo "未获取到新数据，沿用仓库内现有 data.json.gz"
-          fi
 
       - name: Assemble site
         run: |
           mkdir -p _site
           cp index.html styles.css app.js data.json.gz meta.json _site/
-          cp -r scripts _site/ 2>/dev/null || true
           touch _site/.nojekyll
 
       - name: Upload Pages artifact
@@ -74,13 +39,6 @@ jobs:
         with:
           path: _site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
