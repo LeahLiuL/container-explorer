@@ -1,5 +1,6 @@
 name: Build & Deploy Container Explorer
 
+# 触发：推送到 main、每日定时（UTC 02:00 = 上海 10:00）、手动 Run workflow
 on:
   push:
     branches: [main]
@@ -7,11 +8,13 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch: {}
 
+# Pages 官方部署需要这两个权限
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# 避免并发部署互相覆盖
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -31,6 +34,7 @@ jobs:
       - name: Install deps
         run: pip install --quiet openpyxl
 
+      # SFTP 拉取（可选）：连不上也不影响已部署的站点，会沿用仓库内现有 data.json.gz
       - name: Try download Excel from SFTP
         id: sftp
         continue-on-error: true
@@ -39,14 +43,16 @@ jobs:
           FTP_PORT: ${{ secrets.FTP_PORT }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASS: ${{ secrets.FTP_PASS }}
-          FTP_REMOTE: ${{ secrets.FTP_REMOTE }}
+          FTP_REMOTE: ${{ secrets.FTP_REMOTE }}   # 远端 xlsx 路径，如 /Master Data - Leah/近4月VesselBapfile.xlsx
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq lftp
           rm -f /tmp/source.xlsx
+          # 连不上（内网 SFTP 在公网 runner 上不可达）最多等 20s 即放弃，避免干挂十几分钟
           lftp -u "$FTP_USER","$FTP_PASS" -p "$FTP_PORT" sftp://"$FTP_HOST" \
-            -e "get '$FTP_REMOTE' -o /tmp/source.xlsx; quit"
-          ls -lh /tmp/source.xlsx
+            -e "set net:connect-timeout 20; set net:timeout 20; get '$FTP_REMOTE' -o /tmp/source.xlsx; quit"
+          ls -lh /tmp/source.xlsx || true
 
+      # 有新版就转换；没有（SFTP 连不上）就沿用仓库现有 data.json.gz
       - name: Convert to data.json.gz
         run: |
           if [ -s /tmp/source.xlsx ]; then
