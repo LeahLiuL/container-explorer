@@ -1,0 +1,79 @@
+name: Build & Deploy Container Explorer
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet openpyxl
+
+      - name: Try download Excel from SFTP
+        id: sftp
+        continue-on-error: true
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASS: ${{ secrets.FTP_PASS }}
+          FTP_REMOTE: ${{ secrets.FTP_REMOTE }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp
+          rm -f /tmp/source.xlsx
+          lftp -u "$FTP_USER","$FTP_PASS" -p "$FTP_PORT" sftp://"$FTP_HOST" \
+            -e "get '$FTP_REMOTE' -o /tmp/source.xlsx; quit"
+          ls -lh /tmp/source.xlsx
+
+      - name: Convert to data.json.gz
+        run: |
+          if [ -s /tmp/source.xlsx ]; then
+            python scripts/convert.py /tmp/source.xlsx --out data.json.gz --meta meta.json --gzip
+          else
+            echo "未获取到新数据，沿用仓库内现有 data.json.gz"
+          fi
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp index.html styles.css app.js data.json.gz meta.json _site/
+          cp -r scripts _site/ 2>/dev/null || true
+          touch _site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
